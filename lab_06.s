@@ -26,7 +26,7 @@ PROCESSOR 16F887
 ; -------------- MACROS --------------- 
   
 ; Macro para reiniciar el valor del TMR0
-  ; **Recibe el valor a configurar en TMR_VAR**
+
   RESET_TMR0 MACRO TMR_VAR
  
     BANKSEL TMR0	    ; cambiamos de banco
@@ -86,7 +86,7 @@ ISR:
     CALL    INT_TMR2
     
     BTFSC   T0IF	    ; Interrupción del TMR0
-    CALL    INT_TMR0		
+    CALL    INT_TMR0
  
 
 POP:
@@ -99,8 +99,7 @@ POP:
 ; ------ SUBRUTINAS DE INTERRUPCIONES ------
     
 INT_TMR1:
-    RESET_TMR1 0xB, 0xCD   ; Reiniciamos TMR1 para 1s
-    INCF    PORTA	    ; Incremento en PORTA
+    RESET_TMR1 0xB, 0xCD    ; Reiniciamos TMR1 para 1s
     INCF    SEGUNDOS 
     RETURN
     
@@ -118,6 +117,9 @@ INT_TMR2:
     RETURN
     
  INT_TMR0:
+    RESET_TMR0 131		; Reiniciamos TMR0 para 50ms
+    CALL    MOSTRAR_VALOR	; Mostramos valor en hexadecimal en los displays
+    RETURN
     
     
     
@@ -129,14 +131,19 @@ ORG 100h
 MAIN:
     CALL    CONFIG_IO	   
     CALL    CONFIG_RELOJ    ; Oscilador
+    CALL    CONFIG_TMR0     ; TMR0
     CALL    CONFIG_TMR1	    ; TMR1
     CALL    CONFIG_TMR2     ; TMR2
     CALL    CONFIG_INT	    ; interrupciones
     
-    BANKSEL PORTD	    
+       
     
 LOOP:
+    MOVF    SEGUNDOS, W	
+    MOVWF   valor		; Movemos W a variable valor
     
+    CALL    OBTENER_NIBBLE	; Guardamos nibble alto y bajo de valor
+    CALL    SET_DISPLAY		; Guardamos los valores a enviar en PORTC para mostrar valor en hex
     GOTO    LOOP	    
     
 ;------------- SUBRUTINAS ---------------
@@ -152,10 +159,10 @@ CONFIG_RELOJ:
     BANKSEL OPTION_REG		; cambiamos de banco
     BCF	    T0CS		; TMR0 como temporizador
     BCF	    PSA			; prescaler a TMR0
-    BSF	    PS2
-    BSF	    PS1
-    BSF	    PS0			; PS<2:0> -> 111 prescaler 1 : 256
-    RESET_TMR0 61		; Reiniciamos TMR0 para 50ms
+    BCF	    PS2
+    BCF	    PS1
+    BCF	    PS0			; PS<2:0> -> 000 prescaler 1 : 2
+    RESET_TMR0 131		; Reiniciamos TMR0 para 50ms
     RETURN 
     
     
@@ -196,6 +203,13 @@ CONFIG_TMR1:
     
     BANKSEL PORTC
     CLRF    PORTC
+    
+    BANKSEL TRISD           ; para banderas de display
+    BCF     TRISD, 0
+    BCF     TRISD, 1
+    
+    BANKSEL PORTD
+    CLRF    PORTD
     
     RETURN
     
@@ -259,7 +273,7 @@ CONFIG_TMR2:
     MOVWF   display+1		; Guardamos en display+1
     RETURN
     
- MOSTRAR_VOLOR:
+ MOSTRAR_VALOR:
     BCF	    PORTD, 0		; Apagamos display de nibble alto
     BCF	    PORTD, 1		; Apagamos display de nibble bajo
     BTFSC   banderas, 0		; Verificamos bandera
@@ -279,25 +293,29 @@ CONFIG_TMR2:
     BCF	    banderas, 0		; Cambiamos bandera para cambiar el otro display en la siguiente interrupción
     RETURN
 
-
+ ORG 200h
+ 
  TABLE:                         ; PC = PCH + PCL 
     CLRF    PCLATH		; Limpiamos registro PCLATH
-    BSF	    PCLATH, 1		
-    ANDLW   0x0F		; llegar hasta 15
-    ADDWF   PCL			; Apuntamos el PC a ASCII de CONT
-    RETLW   11000000B		; 0	
-    RETLW   11111001B		; 1	
-    RETLW   10100100B           ; 2			
-    RETLW   10110000B      	; 3	
-    RETLW   10011001B		; 4	
-    RETLW   10010010B 		; 5	
-    RETLW   10000010B		; 6	
-    RETLW   11111000B           ; 7
-    RETLW   10000000B           ; 8
-    RETLW   10011000B           ; 9
-    RETLW   10001000B           ; A
-    RETLW   10000011B           ; B
-    RETLW   10100111B           ; C
-    RETLW   10100001B           ; d
-    RETLW   10000110B           ; E
-    RETLW   10001110B           ; F
+    BSF	    PCLATH, 1		; Posicionamos el PC en dirección 02xxh
+    ANDLW   0x0F		; no saltar más del tamaño de la tabla
+    ADDWF   PCL
+    RETLW   00111111B	;0
+    RETLW   00000110B	;1
+    RETLW   01011011B	;2
+    RETLW   01001111B	;3
+    RETLW   01100110B	;4
+    RETLW   01101101B	;5
+    RETLW   01111101B	;6
+    RETLW   00000111B	;7
+    RETLW   01111111B	;8
+    RETLW   01101111B	;9
+    RETLW   01110111B	;A
+    RETLW   01111100B	;b
+    RETLW   00111001B	;C
+    RETLW   01011110B	;d
+    RETLW   01111001B	;E
+    RETLW   01110001B	;F
+   
+    
+END 
