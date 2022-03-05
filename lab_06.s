@@ -24,7 +24,16 @@ PROCESSOR 16F887
 #include <xc.inc>
   
 ; -------------- MACROS --------------- 
-
+  
+; Macro para reiniciar el valor del TMR0
+  ; **Recibe el valor a configurar en TMR_VAR**
+  RESET_TMR0 MACRO TMR_VAR
+ 
+    BANKSEL TMR0	    ; cambiamos de banco
+    MOVLW   TMR_VAR
+    MOVWF   TMR0	    ; configuramos tiempo de retardo
+    BCF	    T0IF	    ; limpiamos bandera de interrupción
+    ENDM
 
 ; Macro para reiniciar el valor del TMR1
   
@@ -46,6 +55,13 @@ PSECT udata_shr		    ; Memoria compartida
     STATUS_TEMP:	DS 1
     SEGUNDOS:           DS 1
     SEGUNDOS2:          DS 1
+    
+    
+PSECT udata_bank0           ; memoria para display
+    valor:         DS 1	    ; Contiene valor a mostrar en los displays de 7-seg
+    banderas:      DS 1     ; cuando encender y apagar cada display
+    nibbles:       DS 2	    ; Contiene los nibbles alto y bajo de valor
+    display:       DS 2	    ; Representación de cada nibble en el display de 7-seg
 
 PSECT resVect, class=CODE, abs, delta=2
 ORG 00h			    ; posición 0000h para el reset
@@ -66,8 +82,11 @@ ISR:
     BTFSC   TMR1IF	    ; Interrupcion de TMR1
     CALL    INT_TMR1
     
-    BTFSC   TMR2IF
+    BTFSC   TMR2IF	    ; Interrupción del TMR2
     CALL    INT_TMR2
+    
+    BTFSC   T0IF	    ; Interrupción del TMR0
+    CALL    INT_TMR0		
  
 
 POP:
@@ -86,17 +105,19 @@ INT_TMR1:
     RETURN
     
 INT_TMR2:
-    BSF	    PORTC, 0
+    BSF	    PORTB, 0
     BCF	    TMR2IF
     INCF    SEGUNDOS2
     MOVLW   2
     SUBWF   SEGUNDOS2, F
     BTFSS   STATUS, 0
     GOTO    $+3
-    BCF	    PORTC,0
+    BCF	    PORTB,0
     GOTO    $-5
     
     RETURN
+    
+ INT_TMR0:
     
     
     
@@ -127,6 +148,16 @@ CONFIG_RELOJ:
     BSF	    OSCCON, 4	    ; IRCF<2:0> -> 011 500kHz
     RETURN
     
+ CONFIG_TMR0:
+    BANKSEL OPTION_REG		; cambiamos de banco
+    BCF	    T0CS		; TMR0 como temporizador
+    BCF	    PSA			; prescaler a TMR0
+    BSF	    PS2
+    BSF	    PS1
+    BSF	    PS0			; PS<2:0> -> 111 prescaler 1 : 256
+    RESET_TMR0 61		; Reiniciamos TMR0 para 50ms
+    RETURN 
+    
     
 CONFIG_TMR1:
     BANKSEL T1CON	    ; Cambiamos a banco 00
@@ -154,8 +185,14 @@ CONFIG_TMR1:
     BANKSEL PORTA
     CLRF    PORTA	    ; Apagamos PORTA
     
-    BANKSEL TRISC
-    BCF     TRISC, 0
+    BANKSEL TRISB
+    BCF     TRISB, 0
+    
+    BANKSEL PORTB
+    CLRF    PORTB
+    
+    BANKSEL TRISC           ; para display 
+    CLRF     TRISC
     
     BANKSEL PORTC
     CLRF    PORTC
@@ -172,6 +209,8 @@ CONFIG_INT:
     BANKSEL INTCON	  
     BSF	    PEIE	    ; int. perifericas 
     BSF	    GIE		    ; Habilitamos interrupciones
+    BSF	    T0IE	    ; Habilitamos interrupcion TMR0
+    BCF	    T0IF	    ; Limpiamos bandera de int. de TMR0
    
     BCF	    TMR1IF	    ; Limpiamos bandera de TMR1
     
@@ -194,5 +233,71 @@ CONFIG_TMR2:
     
     BSF	    TMR2ON	    ; Encendemos TMR2
     RETURN
+    
+    
+ ;-------- subrutinas para multiplexado --------
+ 
+ OBTENER_NIBBLE:
+    MOVLW   0x0F             ;0000 1111
+    ANDWF   valor, W      
+    MOVWF   nibbles          ;nibble bajo 
+    
+    MOVLW   0xF0             ;1111 0000
+    ANDWF   valor, W      
+    MOVWF   nibbles+1      ;nibble alto +1 para guardar en el otro byte de memoria
+    SWAPF   nibbles+1, F
+    
+    RETURN
+    
+ SET_DISPLAY:
+    MOVF    nibbles, W		; Movemos nibble bajo a W
+    CALL    TABLE		; Buscamos valor a cargar en PORTC
+    MOVWF   display		; Guardamos en display
+    
+    MOVF    nibbles+1, W	; Movemos nibble alto a W
+    CALL    TABLE		; Buscamos valor a cargar en PORTC
+    MOVWF   display+1		; Guardamos en display+1
+    RETURN
+    
+ MOSTRAR_VOLOR:
+    BCF	    PORTD, 0		; Apagamos display de nibble alto
+    BCF	    PORTD, 1		; Apagamos display de nibble bajo
+    BTFSC   banderas, 0		; Verificamos bandera
+    GOTO    DISPLAY_1		; 
+    
+ DISPLAY_0:			
+    MOVF    display, W		; Movemos display a W
+    MOVWF   PORTC		; Movemos Valor de tabla a PORTC
+    BSF	    PORTD, 1		; Encendemos display de nibble bajo
+    BSF	    banderas, 0		; Cambiamos bandera para cambiar el otro display en la siguiente interrupción
+    RETURN
+
+ DISPLAY_1:
+    MOVF    display+1, W	; Movemos display+1 a W
+    MOVWF   PORTC		; Movemos Valor de tabla a PORTC
+    BSF	    PORTD, 0		; Encendemos display de nibble alto
+    BCF	    banderas, 0		; Cambiamos bandera para cambiar el otro display en la siguiente interrupción
+    RETURN
 
 
+ TABLE:                         ; PC = PCH + PCL 
+    CLRF    PCLATH		; Limpiamos registro PCLATH
+    BSF	    PCLATH, 1		
+    ANDLW   0x0F		; llegar hasta 15
+    ADDWF   PCL			; Apuntamos el PC a ASCII de CONT
+    RETLW   11000000B		; 0	
+    RETLW   11111001B		; 1	
+    RETLW   10100100B           ; 2			
+    RETLW   10110000B      	; 3	
+    RETLW   10011001B		; 4	
+    RETLW   10010010B 		; 5	
+    RETLW   10000010B		; 6	
+    RETLW   11111000B           ; 7
+    RETLW   10000000B           ; 8
+    RETLW   10011000B           ; 9
+    RETLW   10001000B           ; A
+    RETLW   10000011B           ; B
+    RETLW   10100111B           ; C
+    RETLW   10100001B           ; d
+    RETLW   10000110B           ; E
+    RETLW   10001110B           ; F
